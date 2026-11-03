@@ -50,7 +50,7 @@
         <input type="text" id="linkInput" readonly>
         <div class="row">
           <button class="btn btn-small" id="copyBtn">📋 Копіювати</button>
-          <a class="btn btn-small btn-green" id="mailBtn" target="_blank">✉️ Написати листа</a>
+          <a class="btn btn-small btn-green" id="mailBtn" target="_blank" rel="noopener">✉️ Написати в Gmail</a>
         </div>
       </div>
     </article>
@@ -179,7 +179,11 @@
         const subject = "Відновлення пароля на фан-сайті Nickelodeon";
         const text = `Привіт, ${data.username}!\n\nЩоб встановити новий пароль, перейдіть за посиланням:\n${data.link}\n\nПосилання діє 24 години.`;
         const mailBtn = document.getElementById("mailBtn");
-        mailBtn.href = `mailto:${data.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+        // Відкриваємо Gmail у браузері з уже заповненим листом
+        mailBtn.href = "https://mail.google.com/mail/?view=cm&fs=1" +
+          "&to=" + encodeURIComponent(data.email) +
+          "&su=" + encodeURIComponent(subject) +
+          "&body=" + encodeURIComponent(text);
         mailBtn.classList.toggle("hidden", !data.email);
 
         document.getElementById("requestsCard").classList.remove("hidden");

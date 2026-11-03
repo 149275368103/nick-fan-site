@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Адмін-панель</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .admin { max-width: 800px; margin: 30px auto; padding: 0 20px; }
+    .admin input { padding: 10px 12px; border-radius: 10px; border: 2px solid #f1e6da; font: inherit; width: 260px; }
+    .admin .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .del-user { background: #c0392b; box-shadow: 0 4px 0 #8e2a20; }
+    .stats { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left"><a href="/" class="btn btn-auth">← На сайт</a></div>
+    <h1 class="title">🔐 Адмін-панель</h1>
+    <div class="header-right"></div>
+  </header>
+
+  <div class="admin">
+    <!-- Вхід адміністратора -->
+    <article class="card" id="loginCard">
+      <h2>Вхід для адміністратора</h2>
+      <form id="adminForm" class="row">
+        <input type="password" id="adminPass" placeholder="Пароль адміністратора" required>
+        <button class="btn">Увійти</button>
+      </form>
+      <p id="adminError" class="error"></p>
+    </article>
+
+    <!-- Список користувачів -->
+    <article class="card hidden" id="usersCard">
+      <div class="row" style="justify-content: space-between;">
+        <h2 style="margin:0">👥 Користувачі</h2>
+        <button class="btn btn-small" id="refreshBtn">Оновити</button>
+      </div>
+      <p class="stats" id="stats"></p>
+      <table>
+        <thead><tr><th>Логін</th><th>Дата реєстрації</th><th>Коментарів</th><th></th></tr></thead>
+        <tbody id="usersBody"></tbody>
+      </table>
+    </article>
+  </div>
+
+  <script>
+    // Пароль зберігається лише до закриття вкладки
+    let adminPass = sessionStorage.getItem("adminPass") || "";
+
+    async function adminApi(path, options = {}) {
+      const res = await fetch("/api/admin" + path, {
+        ...options,
+        headers: { "x-admin-password": adminPass },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Помилка");
+      return data;
+    }
+
+    async function loadUsers() {
+      try {
+        const users = await adminApi("/users");
+        sessionStorage.setItem("adminPass", adminPass);
+        document.getElementById("loginCard").classList.add("hidden");
+        document.getElementById("usersCard").classList.remove("hidden");
+
+        const total = users.reduce((sum, u) => sum + u.comments, 0);
+        document.getElementById("stats").textContent =
+          `Усього користувачів: ${users.length} · коментарів: ${total}`;
+
+        const body = document.getElementById("usersBody");
+        body.innerHTML = "";
+        users.forEach((u) => {
+          const tr = document.createElement("tr");
+          const name = document.createElement("td");
+          name.textContent = u.username;
+          const date = document.createElement("td");
+          date.textContent = new Date(u.createdAt).toLocaleString("uk-UA");
+          const count = document.createElement("td");
+          count.textContent = u.comments;
+          const actions = document.createElement("td");
+          const del = document.createElement("button");
+          del.className = "btn btn-small del-user";
+          del.textContent = "Видалити";
+          del.onclick = async () => {
+            if (!confirm(`Видалити користувача ${u.username} і всі його коментарі?`)) return;
+            await adminApi("/users?username=" + encodeURIComponent(u.username), { method: "DELETE" });
+            loadUsers();
+          };
+          actions.appendChild(del);
+          tr.append(name, date, count, actions);
+          body.appendChild(tr);
+        });
+      } catch (err) {
+        sessionStorage.removeItem("adminPass");
+        document.getElementById("adminError").textContent = err.message;
+        document.getElementById("loginCard").classList.remove("hidden");
+        document.getElementById("usersCard").classList.add("hidden");
+      }
+    }
+
+    document.getElementById("adminForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      adminPass = document.getElementById("adminPass").value;
+      document.getElementById("adminError").textContent = "";
+      loadUsers();
+    });
+    document.getElementById("refreshBtn").addEventListener("click", loadUsers);
+
+    if (adminPass) loadUsers();
+  </script>
+</body>
+</html>

@@ -66,6 +66,10 @@ document.querySelectorAll(".tab").forEach((tab) => {
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
     authSubmit.textContent = authMode === "login" ? "Увійти" : "Зареєструватись";
     authForm.password.autocomplete = authMode === "login" ? "current-password" : "new-password";
+    // Друге поле пароля — лише для реєстрації
+    const isRegister = authMode === "register";
+    document.getElementById("password2Label").classList.toggle("hidden", !isRegister);
+    authForm.password2.required = isRegister;
     authError.textContent = "";
   });
 });
@@ -73,6 +77,13 @@ document.querySelectorAll(".tab").forEach((tab) => {
 authForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   authError.textContent = "";
+
+  // Перевірка: чи однакові паролі
+  if (authMode === "register" && authForm.password.value !== authForm.password2.value) {
+    authError.textContent = "Паролі не збігаються";
+    return;
+  }
+
   authSubmit.disabled = true;
   try {
     const data = await api("/" + authMode, {

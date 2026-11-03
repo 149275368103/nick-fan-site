@@ -442,6 +442,10 @@
         <label>Пароль
           <input type="password" name="password" minlength="6" required autocomplete="current-password">
         </label>
+        <!-- Друге поле пароля — показується лише під час реєстрації -->
+        <label id="password2Label" class="hidden">Повторіть пароль
+          <input type="password" name="password2" minlength="6" autocomplete="new-password">
+        </label>
         <p id="authError" class="error"></p>
         <button type="submit" class="btn btn-wide" id="authSubmit">Увійти</button>
       </form>

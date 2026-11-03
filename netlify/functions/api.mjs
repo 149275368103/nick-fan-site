@@ -149,6 +149,50 @@ export default async (req) => {
       }
     }
 
+    // ---------- АДМІН-ПАНЕЛЬ ----------
+    // Пароль адміністратора НЕ пишеться в коді (бо код публічний на GitHub),
+    // а задається в налаштуваннях Netlify як змінна ADMIN_PASSWORD.
+    if (route === "admin") {
+      const adminPassword = process.env.ADMIN_PASSWORD;
+      if (!adminPassword) {
+        return json({ error: "ADMIN_PASSWORD не налаштовано в Netlify" }, 500);
+      }
+      if (req.headers.get("x-admin-password") !== adminPassword) {
+        return json({ error: "Неправильний пароль адміністратора" }, 401);
+      }
+
+      // Список усіх користувачів (без паролів!)
+      if (param === "users" && method === "GET") {
+        const { blobs } = await users.list();
+        const all = await Promise.all(blobs.map((b) => users.get(b.key, { type: "json" })));
+
+        // Рахуємо коментарі кожного користувача
+        const counts = {};
+        for (const show of SHOWS) {
+          const list = (await comments.get(show, { type: "json" })) || [];
+          list.forEach((c) => { counts[c.username] = (counts[c.username] || 0) + 1; });
+        }
+
+        const result = all
+          .filter(Boolean)
+          .map((u) => ({ username: u.username, createdAt: u.createdAt, comments: counts[u.username] || 0 }))
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        return json(result);
+      }
+
+      // Видалити користувача разом з його коментарями:  DELETE /api/admin/users?username=...
+      if (param === "users" && method === "DELETE") {
+        const username = url.searchParams.get("username") || "";
+        await users.delete(username.toLowerCase());
+        for (const show of SHOWS) {
+          const list = (await comments.get(show, { type: "json" })) || [];
+          const filtered = list.filter((c) => c.username !== username);
+          if (filtered.length !== list.length) await comments.setJSON(show, filtered);
+        }
+        return json({ ok: true });
+      }
+    }
+
     return json({ error: "Не знайдено" }, 404);
   } catch (err) {
     console.error(err);

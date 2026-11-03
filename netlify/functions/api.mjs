@@ -39,11 +39,16 @@ async function readBody(req) {
   try { return await req.json(); } catch { return {}; }
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default async (req) => {
   // Три окремі "шухляди" для даних
   const users = getStore("users");
   const sessions = getStore("sessions");
   const comments = getStore("comments");
+  const emails = getStore("emails");   // пошта → логін
+  const resets = getStore("resets");   // токени відновлення пароля
+  const requests = getStore("requests"); // запити "Забули пароль?" для адміна
 
   const url = new URL(req.url);
   // "/api/comments/tmnt" → ["comments", "tmnt"]
@@ -56,10 +61,14 @@ export default async (req) => {
     if (route === "register" && method === "POST") {
       const body = await readBody(req);
       const username = String(body.username || "").trim();
+      const email = String(body.email || "").trim().toLowerCase();
       const password = String(body.password || "");
 
       if (!/^[\p{L}\p{N}_.-]{3,20}$/u.test(username)) {
         return json({ error: "Ім'я: 3–20 символів (літери, цифри, _ . -)" }, 400);
+      }
+      if (!EMAIL_RE.test(email)) {
+        return json({ error: "Введіть правильну адресу пошти" }, 400);
       }
       if (password.length < 6) {
         return json({ error: "Пароль має бути щонайменше 6 символів" }, 400);
@@ -68,26 +77,83 @@ export default async (req) => {
       if (await users.get(key)) {
         return json({ error: "Таке ім'я вже зайняте" }, 409);
       }
+      if (await emails.get(email)) {
+        return json({ error: "Ця пошта вже використовується" }, 409);
+      }
       // НІКОЛИ не зберігайте пароль у відкритому вигляді — лише хеш!
       await users.setJSON(key, {
         username,
+        email,
         passwordHash: bcrypt.hashSync(password, 10),
         createdAt: new Date().toISOString(),
       });
+      // Окрема "шухляда": пошта → логін (щоб знаходити користувача за поштою)
+      await emails.setJSON(email, { username });
       const token = await createSession(sessions, username);
       return json({ token, username });
     }
 
-    // ---------- Вхід ----------
+    // ---------- Вхід (за логіном АБО поштою) ----------
     if (route === "login" && method === "POST") {
       const body = await readBody(req);
-      const username = String(body.username || "").trim();
+      const login = String(body.username || "").trim().toLowerCase();
       const password = String(body.password || "");
-      const user = await users.get(username.toLowerCase(), { type: "json" });
+
+      let user = null;
+      if (login.includes("@")) {
+        const link = await emails.get(login, { type: "json" });
+        if (link) user = await users.get(link.username.toLowerCase(), { type: "json" });
+      } else {
+        user = await users.get(login, { type: "json" });
+      }
 
       if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
-        return json({ error: "Неправильне ім'я або пароль" }, 401);
+        return json({ error: "Неправильний логін або пароль" }, 401);
       }
+      const token = await createSession(sessions, user.username);
+      return json({ token, username: user.username });
+    }
+
+    // ---------- Забули пароль: запит адміністратору ----------
+    if (route === "forgot" && method === "POST") {
+      const body = await readBody(req);
+      const email = String(body.email || "").trim().toLowerCase();
+      const link = EMAIL_RE.test(email) ? await emails.get(email, { type: "json" }) : null;
+
+      if (link) {
+        // Зберігаємо запит — адміністратор побачить його в адмін-панелі
+        await requests.setJSON(link.username.toLowerCase(), {
+          username: link.username,
+          email,
+          requestedAt: new Date().toISOString(),
+        });
+      }
+      // Відповідаємо однаково, навіть якщо такої пошти немає,
+      // щоб сторонні не могли перевіряти, хто зареєстрований на сайті.
+      return json({ ok: true });
+    }
+
+    // ---------- Новий пароль за посиланням з листа ----------
+    if (route === "reset" && method === "POST") {
+      const body = await readBody(req);
+      const resetToken = String(body.token || "");
+      const password = String(body.password || "");
+      const reset = resetToken ? await resets.get(resetToken, { type: "json" }) : null;
+
+      if (!reset || reset.expires < Date.now()) {
+        if (reset) await resets.delete(resetToken);
+        return json({ error: "Посилання недійсне або застаріло. Запросіть нове." }, 400);
+      }
+      if (password.length < 6) {
+        return json({ error: "Пароль має бути щонайменше 6 символів" }, 400);
+      }
+      const key = reset.username.toLowerCase();
+      const user = await users.get(key, { type: "json" });
+      if (!user) return json({ error: "Користувача не знайдено" }, 404);
+
+      user.passwordHash = bcrypt.hashSync(password, 10);
+      await users.setJSON(key, user);
+      await resets.delete(resetToken); // посилання одноразове
       const token = await createSession(sessions, user.username);
       return json({ token, username: user.username });
     }
@@ -175,14 +241,45 @@ export default async (req) => {
 
         const result = all
           .filter(Boolean)
-          .map((u) => ({ username: u.username, createdAt: u.createdAt, comments: counts[u.username] || 0 }))
+          .map((u) => ({ username: u.username, email: u.email || "—", createdAt: u.createdAt, comments: counts[u.username] || 0 }))
           .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         return json(result);
+      }
+
+      // Список запитів "Забули пароль?"
+      if (param === "requests" && method === "GET") {
+        const { blobs } = await requests.list();
+        const all = await Promise.all(blobs.map((b) => requests.get(b.key, { type: "json" })));
+        return json(all.filter(Boolean).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt)));
+      }
+
+      // Відхилити (прибрати) запит:  DELETE /api/admin/requests?username=...
+      if (param === "requests" && method === "DELETE") {
+        await requests.delete((url.searchParams.get("username") || "").toLowerCase());
+        return json({ ok: true });
+      }
+
+      // Створити одноразове посилання для зміни пароля:  POST /api/admin/reset-link?username=...
+      if (param === "reset-link" && method === "POST") {
+        const key = (url.searchParams.get("username") || "").toLowerCase();
+        const user = await users.get(key, { type: "json" });
+        if (!user) return json({ error: "Користувача не знайдено" }, 404);
+
+        const resetToken = crypto.randomUUID() + crypto.randomUUID();
+        await resets.setJSON(resetToken, {
+          username: user.username,
+          expires: Date.now() + 24 * 60 * 60 * 1000, // посилання діє 24 години
+        });
+        await requests.delete(key); // запит виконано
+        return json({ link: `${url.origin}/#reset=${resetToken}`, email: user.email || "", username: user.username });
       }
 
       // Видалити користувача разом з його коментарями:  DELETE /api/admin/users?username=...
       if (param === "users" && method === "DELETE") {
         const username = url.searchParams.get("username") || "";
+        const deleted = await users.get(username.toLowerCase(), { type: "json" });
+        if (deleted?.email) await emails.delete(deleted.email);
+        await requests.delete(username.toLowerCase());
         await users.delete(username.toLowerCase());
         for (const show of SHOWS) {
           const list = (await comments.get(show, { type: "json" })) || [];

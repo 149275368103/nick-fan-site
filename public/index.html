@@ -435,19 +435,29 @@
         <button class="tab active" data-mode="login">Увійти</button>
         <button class="tab" data-mode="register">Зареєструватись</button>
       </div>
+      <h2 id="authTitle" class="auth-title hidden"></h2>
+      <p id="authInfo" class="auth-info hidden"></p>
+
+      <!-- data-modes: у яких режимах показувати поле -->
       <form id="authForm">
-        <label>Ім'я користувача
-          <input type="text" name="username" minlength="3" maxlength="20" required autocomplete="username">
+        <label data-modes="login register"><span id="usernameText">Логін або пошта</span>
+          <input type="text" name="username" autocomplete="username">
         </label>
-        <label>Пароль
-          <input type="password" name="password" minlength="6" required autocomplete="current-password">
+        <label data-modes="register forgot">Електронна пошта
+          <input type="email" name="email" autocomplete="email">
         </label>
-        <!-- Друге поле пароля — показується лише під час реєстрації -->
-        <label id="password2Label" class="hidden">Повторіть пароль
+        <label data-modes="login register reset"><span id="passwordText">Пароль</span>
+          <input type="password" name="password" minlength="6" autocomplete="current-password">
+        </label>
+        <label data-modes="register reset">Повторіть пароль
           <input type="password" name="password2" minlength="6" autocomplete="new-password">
         </label>
         <p id="authError" class="error"></p>
         <button type="submit" class="btn btn-wide" id="authSubmit">Увійти</button>
+        <p class="auth-links">
+          <a href="#" id="forgotLink" data-modes="login">Забули пароль?</a>
+          <a href="#" id="backToLogin" data-modes="forgot reset">← Повернутися до входу</a>
+        </p>
       </form>
     </div>
   </div>

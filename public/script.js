@@ -5,7 +5,7 @@
 const API = "/api";
 let token = localStorage.getItem("token");   // збережений вхід
 let currentUser = null;
-let authMode = "login";                       // "login" або "register"
+let authMode = "login";                       // login / register / forgot / reset
 
 // ---------- Запити до бекенду ----------
 async function api(path, options = {}) {
@@ -24,6 +24,13 @@ const pages = document.querySelectorAll(".page");
 const blocks = document.querySelectorAll(".show-block");
 
 function showPage() {
+  // Посилання з листа виглядає так:  https://сайт/#reset=ТОКЕН
+  if (location.hash.startsWith("#reset=")) {
+    resetToken = location.hash.slice("#reset=".length);
+    pages.forEach((p) => p.classList.toggle("hidden", p.id !== "home"));
+    openAuth("reset");
+    return;
+  }
   const id = location.hash.slice(1) || "home";
   const target = document.getElementById(id) || document.getElementById("home");
 
@@ -44,55 +51,116 @@ const authForm = document.getElementById("authForm");
 const authError = document.getElementById("authError");
 const authSubmit = document.getElementById("authSubmit");
 
-function openAuth() {
-  modal.classList.remove("hidden");
+const authTitle = document.getElementById("authTitle");
+const authInfo = document.getElementById("authInfo");
+let resetToken = null; // токен з посилання в листі
+
+// Тексти для кожного режиму вікна
+const MODES = {
+  login:    { button: "Увійти" },
+  register: { button: "Зареєструватись" },
+  forgot:   { button: "Надіслати запит", title: "Забули пароль?",
+              info: "Введіть пошту, яку вказували під час реєстрації. Адміністратор надішле на неї посилання для зміни пароля." },
+  reset:    { button: "Зберегти новий пароль", title: "Новий пароль",
+              info: "Придумайте новий пароль і введіть його двічі." },
+};
+
+// Перемкнути вікно в режим: login / register / forgot / reset
+function setMode(mode) {
+  authMode = mode;
+  const cfg = MODES[mode];
+
+  // Показати лише потрібні поля та посилання
+  authForm.querySelectorAll("[data-modes]").forEach((el) => {
+    const visible = el.dataset.modes.split(" ").includes(mode);
+    el.classList.toggle("hidden", !visible);
+    const input = el.querySelector("input");
+    if (input) input.required = visible;
+  });
+
+  // Вкладки показуємо лише для входу та реєстрації
+  const isTabs = mode === "login" || mode === "register";
+  modal.querySelector(".tabs").classList.toggle("hidden", !isTabs);
+  modal.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.mode === mode));
+
+  authTitle.textContent = cfg.title || "";
+  authTitle.classList.toggle("hidden", !cfg.title);
+  authInfo.textContent = cfg.info || "";
+  authInfo.classList.toggle("hidden", !cfg.info);
+  authInfo.classList.remove("success");
+
+  document.getElementById("usernameText").textContent =
+    mode === "login" ? "Логін або пошта" : "Ім'я користувача";
+  document.getElementById("passwordText").textContent = mode === "reset" ? "Новий пароль" : "Пароль";
+  authForm.password.autocomplete = mode === "login" ? "current-password" : "new-password";
+
+  authSubmit.textContent = cfg.button;
+  authSubmit.classList.remove("hidden");
   authError.textContent = "";
-  authForm.username.focus();
+}
+
+function openAuth(mode = "login") {
+  setMode(mode);
+  modal.classList.remove("hidden");
+  const first = authForm.querySelector("label:not(.hidden) input");
+  if (first) first.focus();
 }
 function closeAuth() {
   modal.classList.add("hidden");
   authForm.reset();
+  if (authMode === "reset") {
+    resetToken = null;
+    history.replaceState(null, "", location.pathname); // прибрати токен з адреси
+  }
 }
 
-document.getElementById("authBtn").addEventListener("click", openAuth);
+document.getElementById("authBtn").addEventListener("click", () => openAuth("login"));
 modal.querySelector(".modal-close").addEventListener("click", closeAuth);
 modal.addEventListener("click", (e) => { if (e.target === modal) closeAuth(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAuth(); });
 
-// Вкладки "Увійти / Зареєструватись"
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    authMode = tab.dataset.mode;
-    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
-    authSubmit.textContent = authMode === "login" ? "Увійти" : "Зареєструватись";
-    authForm.password.autocomplete = authMode === "login" ? "current-password" : "new-password";
-    // Друге поле пароля — лише для реєстрації
-    const isRegister = authMode === "register";
-    document.getElementById("password2Label").classList.toggle("hidden", !isRegister);
-    authForm.password2.required = isRegister;
-    authError.textContent = "";
-  });
+modal.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => setMode(tab.dataset.mode));
+});
+document.getElementById("forgotLink").addEventListener("click", (e) => { e.preventDefault(); setMode("forgot"); });
+document.getElementById("backToLogin").addEventListener("click", (e) => {
+  e.preventDefault();
+  if (authMode === "reset") { resetToken = null; history.replaceState(null, "", location.pathname); }
+  setMode("login");
 });
 
 authForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   authError.textContent = "";
+  const f = authForm;
 
   // Перевірка: чи однакові паролі
-  if (authMode === "register" && authForm.password.value !== authForm.password2.value) {
+  if ((authMode === "register" || authMode === "reset") && f.password.value !== f.password2.value) {
     authError.textContent = "Паролі не збігаються";
     return;
   }
 
+  // Що надсилаємо на сервер у кожному режимі
+  const requests = {
+    login:    { path: "/login",    body: { username: f.username.value, password: f.password.value } },
+    register: { path: "/register", body: { username: f.username.value, email: f.email.value, password: f.password.value } },
+    forgot:   { path: "/forgot",   body: { email: f.email.value } },
+    reset:    { path: "/reset",    body: { token: resetToken, password: f.password.value } },
+  };
+  const { path, body } = requests[authMode];
+
   authSubmit.disabled = true;
   try {
-    const data = await api("/" + authMode, {
-      method: "POST",
-      body: JSON.stringify({
-        username: authForm.username.value,
-        password: authForm.password.value,
-      }),
-    });
+    const data = await api(path, { method: "POST", body: JSON.stringify(body) });
+
+    if (authMode === "forgot") {
+      authInfo.textContent = "✅ Запит надіслано! Якщо така пошта зареєстрована, адміністратор надішле на неї посилання для зміни пароля. Перевірте також папку «Спам».";
+      authInfo.classList.remove("hidden");
+      authInfo.classList.add("success");
+      authSubmit.classList.add("hidden");
+      return;
+    }
+
     token = data.token;
     localStorage.setItem("token", token);
     setUser(data.username);
@@ -174,7 +242,7 @@ document.querySelectorAll(".comments-slot").forEach((slot) => {
 
   slot.querySelector(".open-auth").addEventListener("click", (e) => {
     e.preventDefault();
-    openAuth();
+    openAuth("login");
   });
 });
 

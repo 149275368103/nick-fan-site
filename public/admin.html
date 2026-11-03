@@ -7,11 +7,15 @@
   <title>Адмін-панель</title>
   <link rel="stylesheet" href="style.css">
   <style>
-    .admin { max-width: 800px; margin: 30px auto; padding: 0 20px; }
+    .admin { max-width: 900px; margin: 30px auto; padding: 0 20px; }
     .admin input { padding: 10px 12px; border-radius: 10px; border: 2px solid #f1e6da; font: inherit; width: 260px; }
     .admin .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .del-user { background: #c0392b; box-shadow: 0 4px 0 #8e2a20; }
     .stats { color: var(--muted); }
+    .link-box { background: #fff1e2; border-radius: 12px; padding: 14px; margin-top: 14px; }
+    .link-box input { width: 100%; margin: 8px 0; font-size: .85rem; }
+    .btn-green { background: var(--green); color: #1f3600; box-shadow: 0 4px 0 #6a9a2c; }
+    td .btn { margin: 2px 0; }
   </style>
 </head>
 <body>
@@ -32,6 +36,25 @@
       <p id="adminError" class="error"></p>
     </article>
 
+    <!-- Запити на відновлення пароля -->
+    <article class="card hidden" id="requestsCard">
+      <h2 style="margin-top:0">🔑 Запити «Забули пароль?»</h2>
+      <p class="stats" id="requestsInfo"></p>
+      <table id="requestsTable">
+        <thead><tr><th>Логін</th><th>Пошта</th><th>Коли</th><th></th></tr></thead>
+        <tbody id="requestsBody"></tbody>
+      </table>
+      <!-- Тут з'являється готове посилання -->
+      <div id="linkBox" class="link-box hidden">
+        <b>Посилання для <span id="linkUser"></span></b> (діє 24 години, одноразове):
+        <input type="text" id="linkInput" readonly>
+        <div class="row">
+          <button class="btn btn-small" id="copyBtn">📋 Копіювати</button>
+          <a class="btn btn-small btn-green" id="mailBtn" target="_blank">✉️ Написати листа</a>
+        </div>
+      </div>
+    </article>
+
     <!-- Список користувачів -->
     <article class="card hidden" id="usersCard">
       <div class="row" style="justify-content: space-between;">
@@ -40,7 +63,7 @@
       </div>
       <p class="stats" id="stats"></p>
       <table>
-        <thead><tr><th>Логін</th><th>Дата реєстрації</th><th>Коментарів</th><th></th></tr></thead>
+        <thead><tr><th>Логін</th><th>Пошта</th><th>Дата реєстрації</th><th>Коментарів</th><th></th></tr></thead>
         <tbody id="usersBody"></tbody>
       </table>
     </article>
@@ -66,6 +89,8 @@
         sessionStorage.setItem("adminPass", adminPass);
         document.getElementById("loginCard").classList.add("hidden");
         document.getElementById("usersCard").classList.remove("hidden");
+        document.getElementById("requestsCard").classList.remove("hidden");
+        loadRequests();
 
         const total = users.reduce((sum, u) => sum + u.comments, 0);
         document.getElementById("stats").textContent =
@@ -77,6 +102,8 @@
           const tr = document.createElement("tr");
           const name = document.createElement("td");
           name.textContent = u.username;
+          const mail = document.createElement("td");
+          mail.textContent = u.email;
           const date = document.createElement("td");
           date.textContent = new Date(u.createdAt).toLocaleString("uk-UA");
           const count = document.createElement("td");
@@ -90,8 +117,13 @@
             await adminApi("/users?username=" + encodeURIComponent(u.username), { method: "DELETE" });
             loadUsers();
           };
-          actions.appendChild(del);
-          tr.append(name, date, count, actions);
+          const reset = document.createElement("button");
+          reset.className = "btn btn-small";
+          reset.textContent = "🔑 Посилання";
+          reset.title = "Створити посилання для зміни пароля";
+          reset.onclick = () => makeResetLink(u.username);
+          actions.append(reset, " ", del);
+          tr.append(name, mail, date, count, actions);
           body.appendChild(tr);
         });
       } catch (err) {
@@ -99,8 +131,73 @@
         document.getElementById("adminError").textContent = err.message;
         document.getElementById("loginCard").classList.remove("hidden");
         document.getElementById("usersCard").classList.add("hidden");
+        document.getElementById("requestsCard").classList.add("hidden");
       }
     }
+
+    // ---------- Запити на відновлення пароля ----------
+    async function loadRequests() {
+      const list = await adminApi("/requests");
+      const body = document.getElementById("requestsBody");
+      body.innerHTML = "";
+      document.getElementById("requestsTable").classList.toggle("hidden", list.length === 0);
+      document.getElementById("requestsInfo").textContent =
+        list.length ? `Нових запитів: ${list.length}` : "Нових запитів немає 🎉";
+
+      list.forEach((r) => {
+        const tr = document.createElement("tr");
+        [r.username, r.email, new Date(r.requestedAt).toLocaleString("uk-UA")].forEach((text) => {
+          const td = document.createElement("td");
+          td.textContent = text;
+          tr.appendChild(td);
+        });
+        const actions = document.createElement("td");
+        const make = document.createElement("button");
+        make.className = "btn btn-small btn-green";
+        make.textContent = "Створити посилання";
+        make.onclick = () => makeResetLink(r.username);
+        const dismiss = document.createElement("button");
+        dismiss.className = "btn btn-small del-user";
+        dismiss.textContent = "Відхилити";
+        dismiss.onclick = async () => {
+          await adminApi("/requests?username=" + encodeURIComponent(r.username), { method: "DELETE" });
+          loadRequests();
+        };
+        actions.append(make, " ", dismiss);
+        tr.appendChild(actions);
+        body.appendChild(tr);
+      });
+    }
+
+    async function makeResetLink(username) {
+      try {
+        const data = await adminApi("/reset-link?username=" + encodeURIComponent(username), { method: "POST" });
+        document.getElementById("linkUser").textContent = data.username;
+        document.getElementById("linkInput").value = data.link;
+
+        // Готовий лист: відкриється ваша поштова програма з заповненим текстом
+        const subject = "Відновлення пароля на фан-сайті Nickelodeon";
+        const text = `Привіт, ${data.username}!\n\nЩоб встановити новий пароль, перейдіть за посиланням:\n${data.link}\n\nПосилання діє 24 години.`;
+        const mailBtn = document.getElementById("mailBtn");
+        mailBtn.href = `mailto:${data.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+        mailBtn.classList.toggle("hidden", !data.email);
+
+        document.getElementById("requestsCard").classList.remove("hidden");
+        document.getElementById("linkBox").classList.remove("hidden");
+        document.getElementById("linkBox").scrollIntoView({ behavior: "smooth", block: "center" });
+        loadRequests();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    document.getElementById("copyBtn").addEventListener("click", async () => {
+      const input = document.getElementById("linkInput");
+      try { await navigator.clipboard.writeText(input.value); }
+      catch { input.select(); document.execCommand("copy"); }
+      document.getElementById("copyBtn").textContent = "✅ Скопійовано";
+      setTimeout(() => (document.getElementById("copyBtn").textContent = "📋 Копіювати"), 1500);
+    });
 
     document.getElementById("adminForm").addEventListener("submit", (e) => {
       e.preventDefault();

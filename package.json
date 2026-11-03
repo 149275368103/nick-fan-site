@@ -1,0 +1,13 @@
+{
+  "name": "nick-fan-site",
+  "version": "1.0.0",
+  "description": "Фан-сайт про мультсеріали Nickelodeon з реєстрацією та коментарями",
+  "type": "module",
+  "scripts": {
+    "dev": "netlify dev"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0",
+    "bcryptjs": "^2.4.3"
+  }
+}

@@ -1,0 +1,7 @@
+# Налаштування для Netlify
+[build]
+  publish = "public"             # папка з HTML/CSS/JS
+  functions = "netlify/functions" # папка з бекендом
+
+[dev]
+  port = 8888
